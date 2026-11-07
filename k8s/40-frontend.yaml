@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: pharma
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: frontend
+          image: __ACR__/pharma-frontend:__TAG__
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: BACKEND_URL, value: "http://backend:8000" }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+# Public entry point (Azure load balancer + public IP). Later you can replace this with an Ingress + custom domain + TLS.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: pharma
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /
+spec:
+  type: LoadBalancer
+  selector: { app: frontend }
+  ports: [{ port: 80, targetPort: 8080 }]

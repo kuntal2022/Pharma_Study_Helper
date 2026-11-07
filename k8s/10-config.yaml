@@ -1,0 +1,17 @@
+# Non-secret settings. Fill the REPLACE_ME values once. Secrets (keys, passwords) are NOT here: the pipeline creates
+# the Kubernetes secret "pharma-secrets" from the Azure DevOps variable group.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pharma-config
+  namespace: pharma
+data:
+  AZURE_SQL_SERVER: "REPLACE_ME.database.windows.net"
+  AZURE_SQL_DATABASE: "REPLACE_ME"
+  AZURE_SQL_USERNAME: "REPLACE_ME"
+  AZURE_SEARCH_ENDPOINT: "https://REPLACE_ME.search.windows.net"
+  AZURE_SEARCH_INDEX_NAME: "pharma-study-chunks"
+  AZURE_STORAGE_CONTAINER: "pharmastudy"
+  OPENAI_CHAT_MODEL: "gpt-4.1-mini"
+  OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"
+  REDIS_URL: "redis://redis:6379/0"
