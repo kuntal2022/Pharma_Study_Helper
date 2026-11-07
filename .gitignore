@@ -1,0 +1,51 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.html
+*.docx
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Tracking and local artifacts
+mlruns/
+mlartifacts/
+.langchain/
+*.log
+
+# Data (keep PDFs and outputs out of git)
+Data/
+*.pdf
+*.pptx
+*.docx
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local DB, venv, scripts with keys, scratch
+*.db
+pharmaEnv/
+UploadDocs.cmd
+LoadDataToAz/UploadDocs.cmd
+test.py
+test.ipynb
+Plan
+

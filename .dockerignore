@@ -1,0 +1,15 @@
+.env
+.env.*
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+pharmaEnv
+Data
+Plan
+LoadDataToAz
+UploadDocs.cmd
+test.ipynb
+*.db
+requirements.txt
+requirements.lock.txt

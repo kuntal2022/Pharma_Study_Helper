@@ -1,0 +1,115 @@
+# Azure DevOps pipeline: check -> build + push images to ACR -> deploy to Azure Container Apps.
+# One-time setup: infra/azure-setup.sh (creates ACR, Container Apps, Redis) and two service connections in Azure DevOps
+# (Project settings > Service connections): an Azure Resource Manager one and a Docker Registry (ACR) one.
+# Replace the REPLACE_ME values below (or set them as pipeline variables).
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    exclude: ['README.md', 'Plan/*', 'Data/*']
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  acrName: 'REPLACE_ME'                       # ACR name only, e.g. pharmaacr123 (no .azurecr.io)
+  acrServiceConnection: 'sc-pharma-acr'       # Docker Registry service connection (ACR)
+  azureServiceConnection: 'sc-pharma-azure'   # Azure Resource Manager service connection
+  resourceGroup: 'rg-pharma-study'
+  backendApp: 'pharma-backend'
+  frontendApp: 'pharma-frontend'
+  imageTag: '$(Build.BuildId)'
+
+stages:
+  - stage: Build
+    displayName: Check and build images
+    jobs:
+      - job: Check
+        displayName: Quick checks
+        steps:
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: '3.12' }
+          - script: python -m compileall -q backend
+            displayName: Python syntax check
+          - script: node --check frontend/app.js
+            displayName: Frontend JS syntax check
+
+      - job: Backend
+        displayName: Backend image
+        dependsOn: Check
+        steps:
+          - task: Docker@2
+            displayName: Build and push pharma-backend
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(acrServiceConnection)
+              repository: pharma-backend
+              Dockerfile: backend/Dockerfile
+              buildContext: $(Build.SourcesDirectory)       # project root (needs backend/ and application_work/)
+              tags: |
+                $(imageTag)
+                latest
+
+      - job: Frontend
+        displayName: Frontend image
+        dependsOn: Check
+        steps:
+          - task: Docker@2
+            displayName: Build and push pharma-frontend
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(acrServiceConnection)
+              repository: pharma-frontend
+              Dockerfile: frontend/Dockerfile
+              buildContext: $(Build.SourcesDirectory)/frontend
+              tags: |
+                $(imageTag)
+                latest
+
+  - stage: Deploy
+    displayName: Deploy to Azure Container Apps
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Prod
+        displayName: Update container apps
+        environment: pharma-prod                 # add an Approval check on this environment if you want a manual gate
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: Roll out new images
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -e
+                      az extension add --name containerapp --upgrade -y
+                      az containerapp update -n $(backendApp)  -g $(resourceGroup) --image $(acrName).azurecr.io/pharma-backend:$(imageTag)
+                      az containerapp update -n $(frontendApp) -g $(resourceGroup) --image $(acrName).azurecr.io/pharma-frontend:$(imageTag)
+
+                - task: AzureCLI@2
+                  displayName: Smoke test
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -e
+                      FQDN=$(az containerapp show -n $(frontendApp) -g $(resourceGroup) --query properties.configuration.ingress.fqdn -o tsv)
+                      echo "Frontend: https://$FQDN"
+                      for i in $(seq 1 12); do
+                        UI=$(curl -s -o /dev/null -w "%{http_code}" "https://$FQDN/" || true)
+                        API=$(curl -s -o /dev/null -w "%{http_code}" "https://$FQDN/api/studies" || true)   # 401 = backend reached, login required
+                        echo "try $i: UI=$UI API=$API"
+                        if [ "$UI" = "200" ] && [ "$API" = "401" ]; then exit 0; fi
+                        sleep 10
+                      done
+                      echo "Smoke test failed"; exit 1
