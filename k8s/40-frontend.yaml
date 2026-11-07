@@ -41,7 +41,9 @@ metadata:
   namespace: pharma
   annotations:
     service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /
+    service.beta.kubernetes.io/azure-load-balancer-resource-group: MC_tufan_rg_pharama-study-k8s_centralindia
 spec:
   type: LoadBalancer
+  loadBalancerIP: 20.219.16.153        # static IP pharma-frontend-ip
   selector: { app: frontend }
   ports: [{ port: 80, targetPort: 8080 }]
