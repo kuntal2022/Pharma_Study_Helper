@@ -3,10 +3,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  REDIS_URL: "redis://redis:6379/0"
   name: pharma-config
   namespace: pharma
 data:
+  REDIS_URL: "redis://redis:6379/0"
   AZURE_SQL_SERVER: "pharmastudy-sql.database.windows.net"
   AZURE_SQL_DATABASE: "pharmastudy-db"
   AZURE_SQL_USERNAME: "pharmaadmin.admin"
