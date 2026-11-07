@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pharma Study Analyser - Build checklist</title>
+<style>
+  :root { --navy:#1f4e79; --blue:#2e75b6; --bg:#f4f6f9; --line:#d9dee5; --text:#1d2733; --muted:#5f6b7a; --green:#2e7d32; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }
+  header { background:var(--navy); color:#fff; padding:16px 28px; position:sticky; top:0; z-index:5; }
+  header h1 { margin:0 0 8px; font-size:18px; }
+  .bar { background:rgba(255,255,255,.25); border-radius:999px; height:10px; overflow:hidden; }
+  .bar > div { background:#7bd88f; height:100%; width:0; transition:width .3s; }
+  .count { font-size:13px; margin-top:6px; opacity:.95; }
+  main { max-width:960px; margin:20px auto 60px; padding:0 20px; }
+  details { background:#fff; border:1px solid var(--line); border-radius:10px; margin-bottom:14px; }
+  summary { cursor:pointer; padding:14px 18px; font-weight:600; color:var(--navy); font-size:16px; list-style:none; display:flex; justify-content:space-between; }
+  summary::-webkit-details-marker { display:none; }
+  summary .ph { font-size:13px; color:var(--muted); font-weight:400; }
+  .steps { padding:0 18px 12px; }
+  .step { display:flex; gap:12px; padding:12px 0; border-top:1px solid var(--line); }
+  .step input[type=checkbox] { width:20px; height:20px; margin-top:3px; flex:none; cursor:pointer; }
+  .step .body { flex:1; }
+  .step .t { font-weight:600; }
+  .step.done .t { text-decoration:line-through; color:var(--muted); }
+  .step .d { font-size:14px; color:var(--text); margin-top:2px; }
+  .tag { display:inline-block; font-size:12px; background:#eef5fb; color:var(--navy); border-radius:6px; padding:1px 8px; margin:4px 6px 0 0; }
+  .tag.file { background:#f1f1f1; color:#333; font-family: Consolas, monospace; }
+  .tag.done { background:#e3f3e5; color:var(--green); }
+  .tools { margin:14px 0; display:flex; gap:10px; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--navy); background:#fff; color:var(--navy); padding:6px 14px; border-radius:8px; font-size:13px; }
+  .note { font-size:13px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pharma Study Analyser: build checklist (do in this order)</h1>
+  <div class="bar"><div id="fill"></div></div>
+  <div class="count" id="count"></div>
+</header>
+
+<main>
+  <div class="tools">
+    <button onclick="openAll(true)">Open all</button>
+    <button onclick="openAll(false)">Close all</button>
+    <button onclick="resetAll()">Reset ticks</button>
+    <span class="note">Your ticks are saved in this browser.</span>
+  </div>
+  <div id="root"></div>
+</main>
+
+<script>
+// done: true = already finished (pre-ticked). Edit this list as the project grows.
+const PHASES = [
+  { title: "Phase 0: Setup", steps: [
+    { id: "az", done: true, t: "Azure resources created", d: "Storage account, container pharmastudy, AI Search, SQL (decide which). Keep keys out of chat and git.", file: "" },
+    { id: "upload", done: true, t: "Upload PDFs to Blob", d: "UploadDocs.cmd skips files that already exist.", file: "UploadDocs.cmd" },
+    { id: "req", done: true, t: "requirements.txt and .gitignore", d: "Created in the project folder.", file: "requirements.txt, .gitignore" },
+    { id: "ui", done: true, t: "Sample study page", d: "Static HTML to see the final layout.", file: "study_page.html" },
+    { id: "env", t: "Create .env and fill the values", d: "Copy the .env template into the folder and fill keys yourself. Rotate any key that was ever pasted in chat.", file: ".env" },
+    { id: "pip", t: "Install packages", d: "Activate pharmaEnv, then: python -m pip install -r requirements.txt. Also install ODBC Driver 18 for SQL Server.", file: "" },
+    { id: "blob", t: "Run read_blob.py", d: "It must list your PDFs and print page counts.", file: "read_blob.py", done_when: "You see each PDF with its pages and doc_id." },
+    { id: "git", t: "git init and first commit", d: "Check that .env and Data/ are NOT in git status.", file: "" }
+  ]},
+  { title: "Phase 1: Extraction to SQL (start with TECOS only)", steps: [
+    { id: "schema", t: "Write the extraction schema (Pydantic)", d: "Study header, arms, endpoints, results, subgroups, safety. Every value has source_page and 'Not reported' option.", file: "schema.py" },
+    { id: "ddl", t: "Write the Azure SQL tables (DDL)", d: "documents, user_documents, studies, study_arms, endpoints, endpoint_results, subgroup_results, safety_events, insights, usage_events, model_prices.", file: "sql/create_tables.sql" },
+    { id: "db", t: "Create tables and test a connection", d: "Use SQLAlchemy + pyodbc with the .env values. Insert one dummy row and read it back.", file: "db.py" },
+    { id: "extract", t: "Extraction function", d: "Pages from read_blob.py go to ChatOpenAI with structured output. Return the Pydantic object.", file: "extract.py" },
+    { id: "valid", t: "Validators", d: "Effect inside CI, percent = events / N, arms add up to total. A failed check sets a review flag, it does not stop saving.", file: "validators.py" },
+    { id: "save", t: "Save extracted facts to SQL", d: "Use doc_id (SHA-256) so the same PDF is never processed twice.", file: "save.py" },
+    { id: "tecos", t: "Check TECOS against the paper", d: "Compare every extracted field to the PDF by hand. Fix prompt or schema. This becomes your first golden example.", file: "golden/tecos.json", done_when: "All fields match or are flagged." }
+  ]},
+  { title: "Phase 2: Insights and RAG", steps: [
+    { id: "chunk", t: "Chunk the PDF (parent-child) with metadata", d: "Keep doc_id, study_id and page in each chunk.", file: "chunking.py" },
+    { id: "embed", t: "Embed and push chunks to Azure AI Search", d: "Create the index with vector + text fields and a doc_id filter.", file: "index_search.py" },
+    { id: "insights", t: "5 insights with LangGraph (map-reduce)", d: "Map: read each section. Reduce: pick top 5 plus one summary. Each insight keeps its source.", file: "insights_graph.py" },
+    { id: "rag", t: "RAG question answering", d: "Numbers from SQL, reasons from retrieved chunks, answers with citations. Refuse if the paper does not say.", file: "rag.py" }
+  ]},
+  { title: "Phase 3: Verdict and presentation", steps: [
+    { id: "verdict", t: "Rule based verdict decider", d: "Superior, noninferior, inconclusive, inferior, plus a safety overlay. Rules read SQL numbers only.", file: "verdict.py" },
+    { id: "templates", t: "Slide template per verdict", d: "One template for each verdict. Always show the reason for the verdict on a slide.", file: "templates/" },
+    { id: "deck", t: "Deck generator (map-reduce) and export", d: "python-pptx first. MCP / Canva after that works.", file: "deck.py" },
+    { id: "review", t: "Review status workflow", d: "extracted, reviewed, approved. Export is blocked until approved. Send to your doctor friends.", file: "review.py" }
+  ]},
+  { title: "Phase 4: Users, dedupe, usage tracking", steps: [
+    { id: "dedupe", t: "Dedupe and user_documents", d: "Same content under another file name is only linked to the user. Delete by reference count.", file: "dedupe.py" },
+    { id: "usage", t: "usage_events logging", d: "Uploads, failures, questions, input and output tokens, cost from model_prices.", file: "usage.py" },
+    { id: "dash", t: "Usage and findings dashboard", d: "Read from SQL, show in the UI.", file: "dashboard.html" }
+  ]},
+  { title: "Phase 5: UI and Compare", steps: [
+    { id: "api", t: "FastAPI backend", d: "Endpoints: upload, study page data, insights, ask, deck, compare.", file: "api.py" },
+    { id: "wire", t: "Connect study_page.html to real data", d: "Replace sample values section by section: header, outcomes, subgroups, safety, insights, chat.", file: "" },
+    { id: "compare", t: "Compare (only on button click)", d: "1 to 3 studies, comparability flags, 3 compare insights, max 3 extra slides, indirect comparison label.", file: "compare.py" }
+  ]},
+  { title: "Phase 6: Quality and release", steps: [
+    { id: "golden", t: "Golden set of 10 to 15 studies", d: "Doctor-verified JSON in git. Add questions the paper cannot answer.", file: "golden/" },
+    { id: "eval", t: "Evaluation run", d: "Field accuracy for extraction, hit rate and MRR for retrieval, faithfulness for answers.", file: "eval.py" },
+    { id: "trace", t: "LangSmith and MLflow", d: "Trace every run. Save prompt and model version with each extraction.", file: "" },
+    { id: "ci", t: "CI/CD", d: "GitHub Actions: tests, evaluation gate, deploy.", file: ".github/workflows/ci.yml" },
+    { id: "polish", t: "README and GitHub polish", d: "Architecture diagram, screenshots, how to run, limits and compliance notes.", file: "README.md" }
+  ]}
+];
+
+const KEY = "pharma_checklist_v1";
+let state = {};
+try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+function isDone(s) { return (s.id in state) ? state[s.id] : !!s.done; }
+
+function render() {
+  const root = document.getElementById("root");
+  let total = 0, done = 0, firstOpen = -1;
+  root.innerHTML = "";
+  PHASES.forEach((p, pi) => {
+    const pDone = p.steps.filter(isDone).length;
+    if (firstOpen < 0 && pDone < p.steps.length) firstOpen = pi;
+  });
+  PHASES.forEach((p, pi) => {
+    const pDone = p.steps.filter(isDone).length;
+    total += p.steps.length; done += pDone;
+    const d = document.createElement("details");
+    if (pi === firstOpen) d.open = true;
+    d.innerHTML = '<summary><span>' + p.title + '</span><span class="ph">' + pDone + ' / ' + p.steps.length + '</span></summary><div class="steps"></div>';
+    const box = d.querySelector(".steps");
+    p.steps.forEach(s => {
+      const ok = isDone(s);
+      const el = document.createElement("div");
+      el.className = "step" + (ok ? " done" : "");
+      el.innerHTML = '<input type="checkbox"' + (ok ? " checked" : "") + '><div class="body"><div class="t"></div><div class="d"></div></div>';
+      el.querySelector(".t").textContent = s.t;
+      el.querySelector(".d").textContent = s.d;
+      const body = el.querySelector(".body");
+      if (s.file) body.insertAdjacentHTML("beforeend", '<span class="tag file">' + s.file + '</span>');
+      if (s.done_when) body.insertAdjacentHTML("beforeend", '<span class="tag">Done when: ' + s.done_when + '</span>');
+      el.querySelector("input").addEventListener("change", e => { state[s.id] = e.target.checked; save(); render(); });
+      box.appendChild(el);
+    });
+    root.appendChild(d);
+  });
+  const pct = total ? Math.round(done * 100 / total) : 0;
+  document.getElementById("fill").style.width = pct + "%";
+  document.getElementById("count").textContent = done + " of " + total + " steps done (" + pct + "%)";
+}
+function openAll(v) { document.querySelectorAll("details").forEach(d => d.open = v); }
+function resetAll() { state = {}; save(); render(); }
+render();
+</script>
+</body>
+</html>

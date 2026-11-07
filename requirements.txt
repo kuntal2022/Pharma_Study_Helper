@@ -1,0 +1,68 @@
+# Pharma Study Analyser - Python dependencies
+# Install: python -m pip install -r requirements.txt
+# Versions are not pinned. After a working install, run `pip freeze > requirements.lock.txt` to lock them.
+
+# ---- LLM framework ----
+langchain
+langchain-core
+langchain-community
+langchain-openai          # ChatOpenAI, AzureChatOpenAI, OpenAIEmbeddings
+langchain-text-splitters  # recursive and parent-child chunking
+langchain-azure-ai        # Azure AI Search vector store integration
+langgraph                 # agents: map-reduce insights, verdict and slide flows
+openai
+tiktoken                  # token counting for usage and cost tracking
+
+# ---- Azure ----
+azure-search-documents    # Azure AI Search (index, hybrid search, vector query)
+azure-storage-blob        # PDF storage in Blob
+azure-identity            # auth (DefaultAzureCredential)
+azure-keyvault-secrets    # secrets from Key Vault
+azure-ai-documentintelligence  # layout and table extraction (optional)
+
+# ---- Azure SQL ----
+sqlalchemy
+pyodbc                    # needs "ODBC Driver 18 for SQL Server" installed on the machine
+alembic                   # schema migrations
+
+# ---- PDF parsing ----
+pymupdf                   # fast text and layout extraction
+pdfplumber                # table extraction
+pypdf
+
+# ---- Data and validation ----
+pydantic                  # structured extraction schema and validators
+pydantic-settings
+pandas
+numpy
+scipy                     # statistical checks (CI, effect size)
+python-dotenv             # load .env
+
+# ---- API and UI ----
+fastapi
+uvicorn[standard]
+python-multipart          # PDF upload endpoint and login form
+PyJWT                     # login tokens (auth.py)
+bcrypt                    # password hashing (auth.py)
+httpx
+requests
+streamlit                 # quick UI for prototype (remove if you build another UI)
+plotly                    # forest plots, usage dashboard
+
+# ---- Slides and export (MCP / PPT) ----
+python-pptx
+mcp                       # MCP client and server SDK
+
+# ---- Evaluation and tracking ----
+langsmith                 # tracing and evals
+mlflow                    # experiment tracking
+ragas                     # RAG evaluation
+datasets
+
+# ---- Dev and testing ----
+pytest
+pytest-asyncio
+ruff
+jupyter
+ipykernel
+tenacity                  # retries for API calls
