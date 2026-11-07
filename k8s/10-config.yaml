@@ -1,4 +1,4 @@
-# Non-secret settings. Fill the REPLACE_ME values once. Secrets (keys, passwords) are NOT here: the pipeline creates
+# Non-secret settings. (REDIS_URL is a secret now: it contains the Azure Cache access key.) Fill the REPLACE_ME values once. Secrets (keys, passwords) are NOT here: the pipeline creates
 # the Kubernetes secret "pharma-secrets" from the Azure DevOps variable group.
 apiVersion: v1
 kind: ConfigMap
@@ -14,4 +14,3 @@ data:
   AZURE_STORAGE_CONTAINER: "pharmastudy"
   OPENAI_CHAT_MODEL: "gpt-4.1-mini"
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"
-  REDIS_URL: "redis://redis:6379/0"

@@ -3,7 +3,8 @@
 #   * service connection "sc-pharma-acr"   (Docker Registry -> your ACR)
 #   * service connection "sc-pharma-azure" (Azure Resource Manager, scope = the resource group of the AKS)
 #   * variable group "pharma-secrets" (Pipelines > Library) with SECRET variables:
-#       OPENAI_API_KEY  JWT_SECRET  AZURE_SQL_PASSWORD  AZURE_SEARCH_KEY  AZURE_STORAGE_CONNECTION_STRING  TAVILY_API_KEY
+#       OPENAI_API_KEY  JWT_SECRET  AZURE_SQL_PASSWORD  AZURE_SEARCH_KEY  AZURE_STORAGE_CONNECTION_STRING  TAVILY_API_KEY  REDIS_URL
+#       (REDIS_URL = rediss://:<access-key>@<name>.redis.cache.windows.net:6380/0  -> Azure Cache for Redis, see infra/aks-setup.md)
 #   * environment "pharma-prod" (optional approval check)
 # Replace the REPLACE_ME values below.
 
@@ -125,13 +126,14 @@ stages:
                         --from-literal=AZURE_SEARCH_KEY="$AZURE_SEARCH_KEY" \
                         --from-literal=AZURE_STORAGE_CONNECTION_STRING="$AZURE_STORAGE_CONNECTION_STRING" \
                         --from-literal=TAVILY_API_KEY="$TAVILY_API_KEY" \
+                        --from-literal=REDIS_URL="$REDIS_URL" \
                         --dry-run=client -o yaml | kubectl apply -f -
 
                       # put this build's image names into the manifests
+                      # Redis is Azure Cache for Redis (outside the cluster), so k8s/20-redis.yaml is NOT applied
                       sed -i "s|__ACR__|$(acrName).azurecr.io|g; s|__TAG__|$(imageTag)|g" k8s/*.yaml
-                      kubectl apply -f k8s/
+                      kubectl apply -f k8s/10-config.yaml -f k8s/30-backend.yaml -f k8s/40-frontend.yaml
 
-                      kubectl -n $(namespace) rollout status deploy/redis    --timeout=120s
                       kubectl -n $(namespace) rollout status deploy/backend  --timeout=420s
                       kubectl -n $(namespace) rollout status deploy/frontend --timeout=180s
                   env:
@@ -141,6 +143,7 @@ stages:
                     AZURE_SEARCH_KEY: $(AZURE_SEARCH_KEY)
                     AZURE_STORAGE_CONNECTION_STRING: $(AZURE_STORAGE_CONNECTION_STRING)
                     TAVILY_API_KEY: $(TAVILY_API_KEY)
+                    REDIS_URL: $(REDIS_URL)
 
                 - task: AzureCLI@2
                   displayName: Smoke test
