@@ -25,3 +25,7 @@ langchain-huggingface
 langchain-chroma
 sentence-transformers
 redisvl
+pandas
+ragas
+datasets
+langchain-openai
