@@ -1,20 +1,26 @@
 """chat_graph.py - LangGraph flow for the study chat and the compare chat.
 
- START -> load_memory -> rewrite -> check_cache --hit--> remember -> END
+ START -> input_guard --blocked--> END            (mask PII; refuse personal medical advice)
+              | ok
+        load_memory -> rewrite -> check_cache (exact, then semantic) --hit--> remember -> END
                                         | miss
+        route_intent --general--> general_answer -> remember -> END      (2*2, hello, what is MACE)
+              | study
    retrieve(top 30) -> rerank(LLM, top 6) -> compress (only when context+memory > 70% of budget)
-        -> generate (answer + 3 follow-up questions) -> save_cache -> remember -> END
+        -> generate (answer + 3 follow-up questions) -> output_guard (numbers must be in the excerpts)
+        -> save_cache (skipped if a number was not grounded) -> remember -> END
 
 State holds user_id and the study ids, so retrieval is always limited to that user's own studies.
 """
 import os
 import time
-from typing import List, TypedDict
+from typing import List, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
 import cache
+import guards
 import llm
 import memory
 import obs
@@ -36,8 +42,23 @@ SYSTEM_COMPARE = """You compare several clinical studies, using ONLY the FACTS a
 - Prefer a small table or short bullets for comparisons. Do not give medical advice.
 - Also give up to 3 short follow-up questions the user could ask next."""
 
+SYSTEM_GENERAL = ("You are a friendly assistant inside an app for reading clinical studies. Answer the user's general question "
+                  "briefly and correctly. For anything about a medicine or health give general information only, never personal "
+                  "medical advice, and say a doctor or pharmacist should be consulted. Do not mention any study.")
+
+SYSTEM_ROUTER = ("Decide if the user's question is about a clinical study/paper or not. "
+                 "'general' = ONLY maths, greetings, chit-chat, or a plain definition of a medical term (e.g. 'what is HbA1c'). "
+                 "'study' = EVERYTHING else, including any question that names a drug, trial, dose, price, side effect, "
+                 "result, number, patient group or country, even if the paper may not contain it "
+                 "(the study answer will then say the excerpts do not cover it). "
+                 "When unsure answer 'study'.")
+
 NO_CONTEXT = ("I can't find this study's text. Chat needs the PDF to be uploaded and indexed "
               "(the demo study has no PDF). Please upload the PDF of the study.")
+
+
+class Intent(BaseModel):
+    intent: Literal["study", "general"]
 
 
 class Ranked(BaseModel):
@@ -72,6 +93,13 @@ class ChatState(TypedDict, total=False):
     from_cache: bool
     compressed: bool
     t0: float                   # when this question started (for the answer-time display)
+    blocked: bool               # input_guard refused the question
+    route: str                  # "study" or "general"
+    scope_hash: str             # user + study tag for the semantic cache
+    cache_kind: str             # "exact", "semantic" or "miss"
+    sem_distance: float
+    guard_flags: List[str]
+    ungrounded: List[str]       # numbers in the answer that are not in the excerpts
 
 
 # ---- helpers ----
@@ -93,8 +121,19 @@ def _sources(contexts: List[dict], s: ChatState) -> List[dict]:
 
 
 # ---- nodes ----
+def input_guard(s: ChatState) -> ChatState:
+    """First node: hide PII, refuse personal medical advice. Everything else (even 2*2) passes."""
+    q, kinds = guards.mask_pii(s["question"])
+    flags = [f"pii:{k}" for k in kinds]
+    out: ChatState = {"t0": time.time(), "question": q, "guard_flags": flags}
+    if guards.is_personal_advice(q):
+        out.update({"blocked": True, "answer": guards.REFUSAL_PERSONAL, "sources": [], "follow_ups": [],
+                    "from_cache": False, "guard_flags": flags + ["personal_advice"]})
+    return out
+
+
 def load_memory(s: ChatState) -> ChatState:
-    return {"t0": time.time(), "history": memory.as_text(memory.load(s["user_id"], s.get("mem_scope", s["scope"])))}
+    return {"history": memory.as_text(memory.load(s["user_id"], s.get("mem_scope", s["scope"])))}
 
 
 _FOLLOW_START = ("and ", "also ", "what about", "how about", "why", "then ", "so ", "but ")
@@ -125,11 +164,34 @@ def rewrite(s: ChatState) -> ChatState:
 def check_cache(s: ChatState) -> ChatState:
     scope_key = s["scope"] if s["scope"] != "compare" else "compare:" + ",".join(sorted(s["study_ids"]))
     key = cache.make_key(s["user_id"], scope_key, s["standalone"])
-    hit = cache.get(key)
+    hit = cache.get(key)                                                   # 1) exact match
     if hit:
         return {"cache_key": key, "answer": hit["answer"], "sources": hit["sources"],
-                "follow_ups": hit.get("follow_ups", []), "from_cache": True}
-    return {"cache_key": key, "from_cache": False}
+                "follow_ups": hit.get("follow_ups", []), "from_cache": True, "cache_kind": "exact"}
+    scope_hash = cache.make_scope(s["user_id"], scope_key)
+    sem = cache.sem_get(scope_hash, s["standalone"])                       # 2) similar question, same user + study
+    if sem:
+        v, dist = sem
+        return {"cache_key": key, "scope_hash": scope_hash, "answer": v["answer"], "sources": v["sources"],
+                "follow_ups": v.get("follow_ups", []), "from_cache": True, "cache_kind": "semantic",
+                "sem_distance": round(dist, 4)}
+    return {"cache_key": key, "scope_hash": scope_hash, "from_cache": False, "cache_kind": "miss"}
+
+
+def route_intent(s: ChatState) -> ChatState:
+    """Cache miss only: is this a study question (RAG) or a general one (plain LLM)? On any doubt -> study."""
+    try:
+        return {"route": llm.structured_obj(Intent, SYSTEM_ROUTER, f"Question: {s['standalone']}").intent}
+    except Exception:
+        return {"route": "study"}
+
+
+def general_answer(s: ChatState) -> ChatState:
+    try:
+        a = llm.text(SYSTEM_GENERAL, s["standalone"]).strip()
+    except Exception:
+        a = "Sorry, I could not answer that right now. Please try again."
+    return {"answer": a, "sources": [], "follow_ups": []}
 
 
 def retrieve(s: ChatState) -> ChatState:
@@ -192,11 +254,25 @@ def generate(s: ChatState) -> ChatState:
             "sources": _sources(ctx, s)}
 
 
+def output_guard(s: ChatState) -> ChatState:
+    """Every number in the answer must be in the excerpts (or FACTS). If not: add a warning and do not cache."""
+    ctx = s.get("contexts") or []
+    if not ctx or s.get("answer") == NO_CONTEXT:
+        return {"ungrounded": []}
+    text = " ".join(c["text"] for c in ctx) + " " + (s.get("facts") or "")
+    bad = guards.ungrounded_numbers(s["answer"], text, s.get("standalone", ""))
+    if not bad:
+        return {"ungrounded": []}
+    return {"ungrounded": bad, "answer": s["answer"] + "\n\n" + guards.UNVERIFIED_NOTE,
+            "guard_flags": s.get("guard_flags", []) + ["ungrounded_numbers"]}
+
+
 def save_cache(s: ChatState) -> ChatState:
-    if s.get("contexts"):                      # never cache the "no context" message
+    if s.get("contexts") and not s.get("ungrounded"):     # never cache the "no context" message or an unverified answer
         idx_id = s["study_ids"][0] if s["scope"] != "compare" else "compare"     # so a study's answers can be wiped
-        cache.put(s["cache_key"], {"answer": s["answer"], "sources": s["sources"], "follow_ups": s["follow_ups"]},
-                  s["user_id"], idx_id)
+        value = {"answer": s["answer"], "sources": s["sources"], "follow_ups": s["follow_ups"]}
+        cache.put(s["cache_key"], value, s["user_id"], idx_id)
+        cache.sem_put(value, s.get("scope_hash", ""), s["standalone"], s["user_id"], idx_id)
     return {}
 
 
@@ -210,19 +286,27 @@ def remember(s: ChatState) -> ChatState:
 
 def build_graph():
     g = StateGraph(ChatState)
-    for name, fn in (("load_memory", load_memory), ("rewrite", rewrite), ("check_cache", check_cache),
+    for name, fn in (("input_guard", input_guard), ("load_memory", load_memory), ("rewrite", rewrite),
+                     ("check_cache", check_cache), ("route_intent", route_intent), ("general_answer", general_answer),
                      ("retrieve", retrieve), ("rerank", rerank), ("compress", compress),
-                     ("generate", generate), ("save_cache", save_cache), ("remember", remember)):
+                     ("generate", generate), ("output_guard", output_guard), ("save_cache", save_cache),
+                     ("remember", remember)):
         g.add_node(name, fn)
-    g.add_edge(START, "load_memory")
+    g.add_edge(START, "input_guard")
+    g.add_conditional_edges("input_guard", lambda s: "blocked" if s.get("blocked") else "ok",
+                            {"blocked": END, "ok": "load_memory"})
     g.add_edge("load_memory", "rewrite")
     g.add_edge("rewrite", "check_cache")
     g.add_conditional_edges("check_cache", lambda s: "hit" if s.get("from_cache") else "miss",
-                            {"hit": "remember", "miss": "retrieve"})
+                            {"hit": "remember", "miss": "route_intent"})
+    g.add_conditional_edges("route_intent", lambda s: "general" if s.get("route") == "general" else "study",
+                            {"general": "general_answer", "study": "retrieve"})
+    g.add_edge("general_answer", "remember")
     g.add_edge("retrieve", "rerank")
     g.add_conditional_edges("rerank", _route_compress, {"compress": "compress", "generate": "generate"})
     g.add_edge("compress", "generate")
-    g.add_edge("generate", "save_cache")
+    g.add_edge("generate", "output_guard")
+    g.add_edge("output_guard", "save_cache")
     g.add_edge("save_cache", "remember")
     g.add_edge("remember", END)
     return g.compile()
@@ -237,7 +321,8 @@ def ask(user_id: str, question: str, study_ids: List[str], scope: str, labels: d
     if _graph is None:
         _graph = build_graph()
     out = _graph.invoke({"user_id": user_id, "scope": scope, "study_ids": study_ids, "labels": labels or {},
-                         "facts": facts, "question": question.strip(), "mem_scope": memory_scope or scope})
+                         "facts": facts, "question": question.strip(), "mem_scope": memory_scope or scope,
+                         "t0": time.time()})
     elapsed_ms = int((time.time() - out.get("t0", time.time())) * 1000)
     cand = out.get("candidates") or []
     scores = [c["score"] for c in cand if c.get("score") is not None]
@@ -245,6 +330,9 @@ def ask(user_id: str, question: str, study_ids: List[str], scope: str, labels: d
               question_len=len(question), cache_hit=bool(out.get("from_cache")), n_candidates=len(cand),
               n_contexts=len(out.get("contexts") or []), top_score=round(max(scores), 3) if scores else None,
               compressed=bool(out.get("compressed")), no_context=out.get("answer") == NO_CONTEXT,
-              answer_len=len(out.get("answer", "")), latency_ms=elapsed_ms)
+              answer_len=len(out.get("answer", "")), latency_ms=elapsed_ms,
+              cache_kind=out.get("cache_kind"), sem_distance=out.get("sem_distance"), route=out.get("route"),
+              blocked=bool(out.get("blocked")), guard_flags=out.get("guard_flags", []),
+              ungrounded_numbers=len(out.get("ungrounded") or []))
     return {"answer": out["answer"], "sources": out.get("sources", []), "follow_ups": out.get("follow_ups", []),
             "cached": bool(out.get("from_cache")), "elapsed_ms": elapsed_ms}
