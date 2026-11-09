@@ -10,7 +10,7 @@ Upload a clinical-study PDF and get a structured, verifiable summary, a RAG chat
 |---|---|
 | Ingest | Upload a study PDF. The LLM extracts a structured study (design, arms, populations, outcomes, effect, CI, p-value) into Azure SQL. The PDF goes to Blob Storage and its chunks to Azure AI Search. |
 | Verdict | A rule-based verdict from effect and confidence interval (HR / OR / RR, superiority vs non-inferiority). Plain code, no LLM, so it cannot hallucinate a conclusion. |
-| Study chat (RAG) | Hybrid (vector + keyword) retrieval filtered per user and per study, LangGraph chat flow, Redis answer cache and conversation memory. |
+| Study chat (RAG) | Hybrid (vector + keyword) retrieval filtered per user and per study, LangGraph chat flow with guardrails (PII masking, refusal of personal medical advice, number-grounding check), a two-layer answer cache (exact match plus semantic cache on Azure Managed Redis) and conversation memory. |
 | Buckets | Group studies into named buckets and chat or compare across them. |
 | Sales and Marketing | Brochure (.docx), slide deck (.pptx), Q&A set, and medical-rep short and long call scripts. Every number is generated from database facts and re-checked in code against the source. |
 | Smart PPT agent | Human-in-the-loop deck builder: the agent scans the study, proposes 5-6 points, the human adds notes or approves (60-minute window, auto-picks the best if no reply), then it builds up to 10 slides. |
@@ -25,7 +25,8 @@ flowchart LR
   BE --> SQL[(Azure SQL)]
   BE --> BLOB[(Blob Storage: PDFs)]
   BE --> AIS[(Azure AI Search: chunks)]
-  BE --> RED[(Redis: cache + memory)]
+  BE --> RED[(Redis in-cluster: exact cache + memory)]
+  BE --> AMR[(Azure Managed Redis: semantic cache)]
   BE --> OAI[OpenAI: gpt-4.1-mini + embeddings]
   BE --> TAV[Tavily: web research]
 ```
@@ -45,7 +46,9 @@ backend/            FastAPI app and agents
   verdict.py          rule-based verdict (no LLM)
   rag.py              chunking, embeddings, Azure AI Search (hybrid)
   chat_graph.py       LangGraph study chat and compare chat
-  cache.py, memory.py Redis answer cache and conversation memory
+  cache.py, memory.py Redis exact + semantic answer cache, conversation memory
+  guards.py           PII masking, personal-advice refusal, number-grounding check
+  obs.py              structured JSON logging with a request id
   marketing.py        brochure / deck / Q&A / call scripts + docx and pptx export
   ppt_agent.py        human-in-the-loop PPT agent (LangGraph)
   medicine_agent.py   Tavily research agent for the Medicine page
@@ -53,7 +56,7 @@ backend/            FastAPI app and agents
   storage.py          Blob Storage
   Dockerfile          multi-stage backend image
 frontend/           index.html, app.js, style.css, nginx.conf, Dockerfile
-application_work/   golden evaluation data
+application_work/   golden evaluation data (65 questions) and the RAGAS runner (run_ragas.py)
 k8s/                Kubernetes manifests (namespace, config, redis, backend, frontend)
 infra/aks-setup.md  one-time Azure setup notes
 azure-pipelines.yml Azure DevOps CI/CD
@@ -79,7 +82,11 @@ Environment variables (names only, never commit values):
 | `AZURE_SQL_SERVER`, `AZURE_SQL_DATABASE`, `AZURE_SQL_USERNAME`, `AZURE_SQL_PASSWORD` | Azure SQL |
 | `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_KEY`, `AZURE_SEARCH_INDEX_NAME` | Azure AI Search |
 | `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_CONTAINER` | Blob Storage |
-| `REDIS_URL` | Redis (optional locally) |
+| `REDIS_URL` | in-cluster Redis for the exact-match cache and memory (optional locally) |
+| `REDIS_HOST`, `REDIS_KEY` | Azure Managed Redis for the semantic cache (host without the port; the app builds `rediss://:key@host:10000`) |
+| `SEMANTIC_CACHE_ENABLED`, `SEMANTIC_CACHE_DISTANCE_THRESHOLD`, `CACHE_TTL_SECONDS` | semantic cache switch (`true`), cosine-distance threshold (`0.11`), cache lifetime in seconds (`86400`) |
+| `LOG_LEVEL` | log verbosity (default `INFO`) |
+| `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`, `AZURE_JUDGE_DEPLOYMENT` | Azure OpenAI used by the RAGAS evaluation (judge `gpt-4.1-mini` and embeddings) |
 | `TAVILY_API_KEY` | Medicine page web research |
 
 ## Containers
@@ -98,7 +105,7 @@ Two images, both multi-stage and running as a non-root user:
 Cluster layout (namespace `pharma`):
 - `backend` - 1 replica (the PPT agent keeps sessions in process memory, so it is not yet horizontally scalable). Config from ConfigMap `pharma-config`, secrets from `pharma-secrets`.
 - `frontend` - 2 replicas behind a `LoadBalancer` Service on a reserved static public IP.
-- `redis` - in-cluster `redis:7-alpine` (cache and memory are disposable; swap to a managed Redis by changing `REDIS_URL`).
+- `redis` - in-cluster `redis:7-alpine` for the exact-match cache and memory (disposable). The semantic cache lives in Azure Managed Redis; its host is in `k8s/10-config.yaml` and `REDIS_KEY` comes from the variable group into `pharma-secrets`.
 
 One-time setup (full commands in `infra/aks-setup.md`):
 1. Create ACR and AKS; attach them: `az aks update -g <rg> -n <aks> --attach-acr <acr>`.
@@ -111,6 +118,53 @@ Lessons from the first deployment:
 - ACR not attached to AKS gives `ImagePullBackOff`; attach it.
 - Probe `timeoutSeconds: 1` on `/openapi.json` can restart the backend on cold start; raise it if you see restarts.
 - A `.gitignore` rule for `*.html` also ignores `frontend/index.html`; add an exception or `git add -f`.
+
+## Chat flow, caching, guardrails and logging
+
+```
+input_guard -> (blocked: stop) -> load_memory -> rewrite -> check_cache
+  cache hit  -> remember
+  cache miss -> route_intent -> general: general_answer -> remember
+                             -> study:   retrieve -> rerank -> (compress) -> generate
+                                         -> output_guard -> save_cache -> remember
+```
+
+- **Guardrails (`guards.py`, rule-based on purpose: fast, free, predictable, testable).** `input_guard` masks PII (email, Aadhaar, PAN, phone numbers) and refuses questions that ask for personal medical advice. `output_guard` checks that every number in the answer appears in the retrieved excerpts; if not, the answer gets a warning note and is not cached. The intent router sends only maths, greetings, chit-chat and plain definitions to the general path; everything else is answered from the excerpts only.
+- **Two-layer cache.** (1) Exact match: a hash of user, study scope and question in the in-cluster Redis. (2) Semantic cache: RedisVL `SemanticCache` on Azure Managed Redis with the `all-MiniLM-L6-v2` embedding, cosine-distance threshold `0.11` (smaller = stricter) and a 24-hour TTL. Hits are filtered by a `scope` tag, so a user only gets a cached answer for the same user and the same study (or compare set). Deleting a study also deletes its semantic entries. If Redis is down, the app still answers (no cache).
+- **Logging (`obs.py`).** One JSON line per event on stdout with a request id, readable with `kubectl logs` or Container Insights. The `chat` event records scope, number of candidates and contexts, top retrieval score, cache hit and kind (`exact` or `semantic`), semantic distance, route (`study` or `general`), blocked flag, guard flags, answer length and latency. Keys, passwords and the full question or answer text are never logged.
+
+## Evaluation (RAGAS)
+
+A golden set of 65 questions from three studies (EMPA-REG, a CVOT review from SAVOR-TIMI to DECLARE-TIMI, and TECOS): 52 answerable questions with expected answers and 13 "not in the paper" questions that the app should refuse. The runner `application_work/run_ragas.py` asks every question through the real chat graph, then scores it with RAGAS using an Azure OpenAI judge (`gpt-4.1-mini`).
+
+```
+python application_work/run_ragas.py --user-id <user id> [--limit 2]
+```
+
+Results are saved as CSV in `application_work/golden/ragas_results/`.
+
+**Baseline (first full run, 65 questions)**
+
+| Metric | Score |
+|---|---|
+| Faithfulness | 0.970 |
+| Context recall | 0.980 |
+| Context precision (with reference) | 0.889 |
+| Answer relevancy | 0.849 |
+| Number recall (own check: expected numbers found in the answer) | 0.721 |
+
+| Study | Faithfulness | Answer relevancy | Context precision | Context recall | Number recall |
+|---|---|---|---|---|---|
+| CVOT review | 1.000 | 0.801 | 0.878 | 1.000 | 0.744 |
+| EMPA-REG | 0.945 | 0.892 | 0.929 | 1.000 | 0.698 |
+| TECOS | 0.962 | 0.863 | 0.834 | 0.917 | 0.723 |
+
+**What the baseline showed**
+
+- Retrieval and grounding are strong (context recall 0.98, faithfulness 0.97).
+- "Not in the paper" questions: the strict abstain check passed 4 of 13 (31%). Several of the other 9 are correct refusals worded differently ("the excerpts do not provide ..."), so the check is too narrow; manual review is in progress.
+- A few answers (a drug price, a trial that is not in the paper) came from general knowledge, because the intent router sent them to the general-question path. Fix in progress: the router now sends everything that names a drug, trial, price or number to the study path, so the answer is limited to the excerpts. The numbers above will be refreshed after the next full run.
+- Number recall (0.72) will be checked for formatting differences such as `7,020` versus `7020`.
 
 ## Security notes
 
