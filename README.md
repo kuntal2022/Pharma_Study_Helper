@@ -153,6 +153,24 @@ Results are saved as CSV in `application_work/golden/ragas_results/`.
 | Answer relevancy | 0.849 |
 | Number recall (own check: expected numbers found in the answer) | 0.721 |
 
+- number_recall = |numbers in expected answer ∩ numbers in model answer| / |numbers in expected answer|
+- How it is computed
+
+Extract all numbers from the expected answer and from the model answer (e.g. 7,020, 0.86, 63).
+Normalize them: remove thousands separators (7,020 → 7020), ignore citation markers such as [p.3], and skip single-digit numbers.
+Divide the count of shared numbers by the count of numbers in the expected answer.
+
+Example
+
+Expected: “HR 0.87, 95% CI 0.78-0.97, P = 0.01” → {0.87, 95, 0.78, 0.97, 0.01}
+The answer contains {0.87, 0.78, 0.97, 0.01}, but not 95.
+number_recall = 4 / 5 = 0.80
+
+Why it exists: RAGAS metrics judge text with an LLM and can miss a wrong or missing statistic. This check is deterministic (no LLM judge) and verifies that the key clinical numbers (hazard ratios, confidence intervals, sample sizes) are actually present.
+
+Limitations: it checks presence only, not context, so a number can match by chance. Different formats (seven thousand, 63.0 vs 63) can be missed, which may lower the score.
+
+
 | Study | Faithfulness | Answer relevancy | Context precision | Context recall | Number recall |
 |---|---|---|---|---|---|
 | CVOT review | 1.000 | 0.801 | 0.878 | 1.000 | 0.744 |
