@@ -176,8 +176,9 @@ Limitations: it checks presence only, not context, so a number can match by chan
 | CVOT review | 1.000 | 0.801 | 0.878 | 1.000 | 0.744 |
 | EMPA-REG | 0.945 | 0.892 | 0.929 | 1.000 | 0.698 |
 | TECOS | 0.962 | 0.863 | 0.834 | 0.917 | 0.723 |
-- Using a high power model can increase the result little more 
-**What the baseline showed**
+- Using a high power model can increase the result little more
+  
+## **What the baseline showed**
 
 - Retrieval and grounding are strong (context recall 0.98, faithfulness 0.97).
 - "Not in the paper" questions: the strict abstain check passed 0 of 13 (0%). Strong LLM work.
