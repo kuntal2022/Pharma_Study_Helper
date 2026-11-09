@@ -6,6 +6,8 @@ Every /api endpoint takes the user id from the login token, never from the brows
 import hashlib
 import json
 import os
+import time
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
+import obs
 from auth import get_current_user, router as auth_router
 from models import StudyUI, display_label
 from verdict import get_verdict, overall_verdict
@@ -26,6 +29,24 @@ DEMO = ROOT / "application_work" / "golden" / "tecos_golden.json"
 
 app = FastAPI(title="Pharma Study Analyser")
 app.include_router(auth_router)
+
+
+@app.middleware("http")
+async def request_log(req, call_next):
+    """One log line per API call, tied together by a request id (also returned in the x-request-id header)."""
+    rid = req.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    obs.request_id.set(rid)
+    t0 = time.time()
+    try:
+        resp = await call_next(req)
+    except Exception:
+        obs.log.exception("unhandled error", extra={"fields": {"path": req.url.path, "method": req.method}})
+        raise
+    if req.url.path.startswith("/api/"):                    # skip static files and health probes
+        obs.event("http", method=req.method, path=req.url.path, status=resp.status_code,
+                  latency_ms=int((time.time() - t0) * 1000))
+    resp.headers["x-request-id"] = rid
+    return resp
 
 
 def _study_payload(study: StudyUI, study_id: str) -> dict:

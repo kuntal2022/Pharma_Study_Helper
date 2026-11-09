@@ -8,6 +8,7 @@
 State holds user_id and the study ids, so retrieval is always limited to that user's own studies.
 """
 import os
+import time
 from typing import List, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 import cache
 import llm
 import memory
+import obs
 import rag
 
 RETRIEVE_K = int(os.getenv("RETRIEVE_K", "30"))
@@ -69,6 +71,7 @@ class ChatState(TypedDict, total=False):
     sources: List[dict]
     from_cache: bool
     compressed: bool
+    t0: float                   # when this question started (for the answer-time display)
 
 
 # ---- helpers ----
@@ -91,7 +94,7 @@ def _sources(contexts: List[dict], s: ChatState) -> List[dict]:
 
 # ---- nodes ----
 def load_memory(s: ChatState) -> ChatState:
-    return {"history": memory.as_text(memory.load(s["user_id"], s.get("mem_scope", s["scope"])))}
+    return {"t0": time.time(), "history": memory.as_text(memory.load(s["user_id"], s.get("mem_scope", s["scope"])))}
 
 
 _FOLLOW_START = ("and ", "also ", "what about", "how about", "why", "then ", "so ", "but ")
@@ -200,7 +203,8 @@ def save_cache(s: ChatState) -> ChatState:
 def remember(s: ChatState) -> ChatState:
     if s.get("answer") and s["answer"] != NO_CONTEXT:
         memory.add_turn(s["user_id"], s.get("mem_scope", s["scope"]), {"q": s["question"], "a": s["answer"], "sources": s.get("sources", []),
-                                                    "cached": bool(s.get("from_cache")), "follow_ups": s.get("follow_ups", [])})
+                                                    "cached": bool(s.get("from_cache")), "follow_ups": s.get("follow_ups", []),
+                                                    "ms": int((time.time() - s.get("t0", time.time())) * 1000)})
     return {}
 
 
@@ -234,5 +238,13 @@ def ask(user_id: str, question: str, study_ids: List[str], scope: str, labels: d
         _graph = build_graph()
     out = _graph.invoke({"user_id": user_id, "scope": scope, "study_ids": study_ids, "labels": labels or {},
                          "facts": facts, "question": question.strip(), "mem_scope": memory_scope or scope})
+    elapsed_ms = int((time.time() - out.get("t0", time.time())) * 1000)
+    cand = out.get("candidates") or []
+    scores = [c["score"] for c in cand if c.get("score") is not None]
+    obs.event("chat", scope=("compare" if scope == "compare" else "study"), n_studies=len(study_ids),
+              question_len=len(question), cache_hit=bool(out.get("from_cache")), n_candidates=len(cand),
+              n_contexts=len(out.get("contexts") or []), top_score=round(max(scores), 3) if scores else None,
+              compressed=bool(out.get("compressed")), no_context=out.get("answer") == NO_CONTEXT,
+              answer_len=len(out.get("answer", "")), latency_ms=elapsed_ms)
     return {"answer": out["answer"], "sources": out.get("sources", []), "follow_ups": out.get("follow_ups", []),
-            "cached": bool(out.get("from_cache"))}
+            "cached": bool(out.get("from_cache")), "elapsed_ms": elapsed_ms}
