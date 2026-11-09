@@ -38,7 +38,7 @@ memory.load = lambda *a, **k: {"summary": "", "turns": [], "compressions": 0}   
 memory.add_turn = lambda *a, **k: None
 
 ABSTAIN = re.compile(r"not in the paper|not (stated|reported|mentioned|provided|available|included)|"
-                     r"(cannot|can't|could not|couldn't|does not|doesn't) (find|contain|report|state|provide)|supplement|"
+                     r"(cannot|can't|could not|couldn't|does not|doesn't|do not|don't|did not|didn't) (find|contain|report|state|provide|specify|mention|include|give)|supplement|"
                      r"no (information|data)", re.I)
 NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
