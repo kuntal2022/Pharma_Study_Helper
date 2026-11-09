@@ -73,7 +73,7 @@ async function viewHome() {
       <input type="file" id="pdf" accept="application/pdf" hidden>
       <div id="up" style="margin-top:12px"></div>
     </div>
-    <div style="text-align:center;margin-top:14px"><button class="btn light" onclick="demo()">✨ Try the TECOS demo (no upload)</button></div></div>
+    <div style="text-align:center;margin-top:14px"><button class="btn light" onclick="demo()">✍️ Kuntal Chakraborty </button></div></div>
     <h2>My studies</h2><div id="bar" class="bbar"></div><div class="grid" id="list"><div class="muted">Loading…</div></div></div>
     <aside class="side" id="cmp"></aside></div>`;
   const drop = $("#drop"), inp = $("#pdf");
@@ -359,7 +359,7 @@ function chatPanel(el, cfg) {
   el.innerHTML = `<div class="card chatbox"><div class="chead"><h3>💬 ${esc(cfg.title)}</h3>
       ${st.turns.length ? `<button class="chip ask" id="cnew">↺ New chat</button>` : ""}</div>
     <div class="muted" style="margin-bottom:8px">${esc(cfg.sub)}</div>${cfg.top ? cfg.top() : ""}
-    <div class="msgs" id="msgs">${st.turns.map((t) => `<div class="b user">${esc(t.q)}</div><div class="b bot">${fmt(t.a)}${(t.sources || []).length ? `<div class="src">${t.sources.map(chipSrc).join("")}${t.cached ? '<span class="chip warn">⚡ cache</span>' : ""}</div>` : ""}</div>`).join("")}
+    <div class="msgs" id="msgs">${st.turns.map((t) => `<div class="b user">${esc(t.q)}</div><div class="b bot">${fmt(t.a)}${(t.sources || []).length ? `<div class="src">${t.sources.map(chipSrc).join("")}${t.cached ? '<span class="chip warn">⚡ cache</span>' : ""}</div>` : ""}${t.ms != null ? `<div class="muted" style="font-size:11px;margin-top:4px">⏱ answered in ${fmtMs(t.ms)}</div>` : ""}</div>`).join("")}
       ${st.busy ? `<div class="b user">${esc(st.pending || "")}</div><div class="b bot"><span class="spinner"></span>Thinking…</div>` : ""}
       ${!st.turns.length && !st.busy ? `<div class="muted">${st.loaded ? "Try one of these:" : "Loading…"}</div>` : ""}</div>
     ${lock ? `<div class="err">${esc(lock)}</div>` : `<div class="asks">${!st.busy ? sugg.map((q, i) => `<button class="chip ask" data-q="${i}">${esc(q)}</button>`).join("") : ""}</div>`}
@@ -374,14 +374,20 @@ function chatPanel(el, cfg) {
     api(cfg.base).then((r) => { st.turns = r.turns || []; if (el.isConnected) chatPanel(el, cfg); }).catch(() => { if (el.isConnected) chatPanel(el, cfg); });
   }
 }
+function fmtMs(ms) {                        // 850 ms -> "0.9 s", 65000 -> "1 min 5 s"
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + " s";
+  return Math.floor(s / 60) + " min " + Math.round(s % 60) + " s";
+}
 async function chatSend(cfg, q) {
   const st = cfg.st; if (st.busy) return;
   st.busy = true; st.pending = q;
+  const t0 = performance.now();
   chatPanel(cfg.el, cfg);
   try {
     const body = Object.assign({ question: q }, cfg.body ? cfg.body() : {});
     const r = await api(cfg.base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    st.turns.push({ q, a: r.answer, sources: r.sources, cached: r.cached, follow_ups: r.follow_ups });
+    st.turns.push({ q, a: r.answer, sources: r.sources, cached: r.cached, follow_ups: r.follow_ups, ms: r.elapsed_ms != null ? r.elapsed_ms : Math.round(performance.now() - t0) });
   } catch (e) { st.turns.push({ q, a: "⚠️ " + e.message, sources: [], follow_ups: [] }); }
   st.busy = false; st.pending = null;
   if (cfg.el.isConnected) chatPanel(cfg.el, cfg);

@@ -116,7 +116,7 @@ def search_many(user_id: str, study_ids: List[str], query: str, k: int = 30) -> 
         search_text=query,
         vector_queries=[VectorizedQuery(vector=vec, k_nearest_neighbors=k, fields="content_vector")],
         filter=flt, top=k, select=["study_id", "page", "content"])
-    return [{"study_id": r["study_id"], "page": r["page"], "text": r["content"]} for r in res]
+    return [{"study_id": r["study_id"], "page": r["page"], "text": r["content"], "score": r.get("@search.score")} for r in res]
 
 
 def search(user_id: str, study_id: str, query: str, k: int = 30) -> List[dict]:
