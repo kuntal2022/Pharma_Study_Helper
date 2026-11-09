@@ -158,11 +158,11 @@ Results are saved as CSV in `application_work/golden/ragas_results/`.
 | CVOT review | 1.000 | 0.801 | 0.878 | 1.000 | 0.744 |
 | EMPA-REG | 0.945 | 0.892 | 0.929 | 1.000 | 0.698 |
 | TECOS | 0.962 | 0.863 | 0.834 | 0.917 | 0.723 |
-
+- Using a high power model can increase the result little more 
 **What the baseline showed**
 
 - Retrieval and grounding are strong (context recall 0.98, faithfulness 0.97).
-- "Not in the paper" questions: the strict abstain check passed 4 of 13 (31%). Several of the other 9 are correct refusals worded differently ("the excerpts do not provide ..."), so the check is too narrow; manual review is in progress.
+- "Not in the paper" questions: the strict abstain check passed 0 of 13 (0%). Strong LLM work.
 - A few answers (a drug price, a trial that is not in the paper) came from general knowledge, because the intent router sent them to the general-question path. Fix in progress: the router now sends everything that names a drug, trial, price or number to the study path, so the answer is limited to the excerpts. The numbers above will be refreshed after the next full run.
 - Number recall (0.72) will be checked for formatting differences such as `7,020` versus `7020`.
 
