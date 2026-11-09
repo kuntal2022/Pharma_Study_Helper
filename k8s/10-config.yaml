@@ -15,3 +15,8 @@ data:
   AZURE_STORAGE_CONTAINER: "pharmastudy"
   OPENAI_CHAT_MODEL: "gpt-4.1-mini"
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"
+  # Semantic answer cache (Azure Managed Redis). The access key REDIS_KEY is a secret: see pharma-secrets.
+  REDIS_HOST: "tufanrediscache.centralus.redis.azure.net"
+  SEMANTIC_CACHE_ENABLED: "true"
+  SEMANTIC_CACHE_DISTANCE_THRESHOLD: "0.11"
+  CACHE_TTL_SECONDS: "86400"
