@@ -72,7 +72,7 @@ async function viewHome() {
       <input type="file" id="pdf" accept="application/pdf" hidden>
       <div id="up" style="margin-top:12px"></div>
     </div>
-    <div style="text-align:center;margin-top:14px"><button class="btn light" onclick="demo()">✨ Try the TECOS demo (no upload)</button></div></div>
+    <div style="text-align:center;margin-top:14px"><button class="btn light" onclick="demo()">✍️ Creator : Kuntal Chakraborty </button></div></div>
     <h2>My studies</h2><div id="bar" class="bbar"></div><div class="grid" id="list"><div class="muted">Loading…</div></div></div>
     <aside class="side" id="cmp"></aside></div>`;
   const drop = $("#drop"), inp = $("#pdf");
