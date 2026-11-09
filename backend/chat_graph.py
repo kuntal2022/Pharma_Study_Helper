@@ -47,10 +47,11 @@ SYSTEM_GENERAL = ("You are a friendly assistant inside an app for reading clinic
                   "medical advice, and say a doctor or pharmacist should be consulted. Do not mention any study.")
 
 SYSTEM_ROUTER = ("Decide if the user's question is about a clinical study/paper or not. "
-                 "'study' = anything about the study, trial, paper, its patients, drugs, doses, endpoints, results, numbers, "
-                 "side effects, methods, or anything that could be answered from a paper. "
-                 "'general' = clearly NOT about a paper: maths, greetings, chit-chat, general knowledge, "
-                 "or a plain definition of a medical term. When unsure answer 'study'.")
+                 "'general' = ONLY maths, greetings, chit-chat, or a plain definition of a medical term (e.g. 'what is HbA1c'). "
+                 "'study' = EVERYTHING else, including any question that names a drug, trial, dose, price, side effect, "
+                 "result, number, patient group or country, even if the paper may not contain it "
+                 "(the study answer will then say the excerpts do not cover it). "
+                 "When unsure answer 'study'.")
 
 NO_CONTEXT = ("I can't find this study's text. Chat needs the PDF to be uploaded and indexed "
               "(the demo study has no PDF). Please upload the PDF of the study.")

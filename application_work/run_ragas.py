@@ -33,13 +33,32 @@ chat_graph.cache.get = lambda key: None                 # no cache reads or writ
 chat_graph.cache.put = lambda *a, **k: None
 chat_graph.cache.sem_get = lambda *a, **k: None
 chat_graph.cache.sem_put = lambda *a, **k: None
-memory.load = lambda *a, **k: []                        # no chat memory
+memory.load = lambda *a, **k: {"summary": "", "turns": [], "compressions": 0}    # no chat memory (empty, same shape)
+
 memory.add_turn = lambda *a, **k: None
 
 ABSTAIN = re.compile(r"not in the paper|not (stated|reported|mentioned|provided|available|included)|"
                      r"(cannot|can't|could not|couldn't|does not|doesn't) (find|contain|report|state|provide)|supplement|"
                      r"no (information|data)", re.I)
 NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _shim_vertexai():
+    """ragas 0.4.3 still imports langchain_community's Vertex AI classes, which langchain-community 0.4.x removed.
+    We never use Vertex AI, so give ragas empty stand-ins just for the import."""
+    import types
+    name = "langchain_community.chat_models.vertexai"
+    try:
+        __import__(name)
+    except Exception:
+        m = types.ModuleType(name)
+        m.ChatVertexAI = type("ChatVertexAI", (), {})
+        sys.modules[name] = m
+    import langchain_community.llms as L
+    try:
+        L.VertexAI
+    except Exception:
+        L.VertexAI = type("VertexAI", (), {})
 
 
 def numbers(t: str) -> set:
@@ -86,12 +105,33 @@ def main():
                                               max(1, len(numbers(x["expected_answer"])))), axis=1)
     if not an.empty:
         from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+        _shim_vertexai()
         from ragas import EvaluationDataset, evaluate
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
         from ragas.metrics import Faithfulness, LLMContextPrecisionWithReference, LLMContextRecall, ResponseRelevancy
-        judge = LangchainLLMWrapper(ChatOpenAI(model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini"), temperature=0))
-        emb = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")))
+        # judge + embeddings run on Azure (OpenAI-compatible /openai/v1/ endpoint, same style as test.ipynb)
+        az_base = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/") + "/openai/v1/"
+        az_key = os.environ["AZURE_OPENAI_API_KEY"]
+        judge = LangchainLLMWrapper(ChatOpenAI(model=os.getenv("AZURE_JUDGE_DEPLOYMENT", "gpt-4.1-mini"),
+                                               api_key=az_key, base_url=az_base,
+                                               use_responses_api=False))
+        emb = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
+                                                          api_key=az_key, base_url=az_base,
+                                                          check_embedding_ctx_length=False))
+        # pre-flight: call judge + embeddings once so the REAL error is visible (RAGAS hides it and gives NaN)
+        try:
+            _j = ChatOpenAI(model=os.getenv("AZURE_JUDGE_DEPLOYMENT", "gpt-4.1-mini"), api_key=az_key,
+                            base_url=az_base, use_responses_api=False)
+            print("JUDGE TEST ->", _j.invoke("Say OK").content[:50])
+        except Exception as e:
+            print("JUDGE TEST FAILED ->", type(e).__name__, str(e)[:600])
+        try:
+            _e = OpenAIEmbeddings(model=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
+                                  api_key=az_key, base_url=az_base, check_embedding_ctx_length=False)
+            print("EMBED TEST -> dim", len(_e.embed_query("hello")))
+        except Exception as e:
+            print("EMBED TEST FAILED ->", type(e).__name__, str(e)[:600])
         ds = EvaluationDataset.from_list([{"user_input": x["question"], "response": x["answer"],
                                            "retrieved_contexts": x["contexts"], "reference": x["expected_answer"]}
                                           for x in an.to_dict("records")])
