@@ -48,3 +48,7 @@ test.py
 test.ipynb
 Plan
 
+
+
+# Office/editor temporary lock files (broke the CI syntax check)
+~$*

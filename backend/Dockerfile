@@ -16,6 +16,9 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements-api.txt .
 RUN pip install -r requirements-api.txt
+# semantic cache model baked into the image (no download from Hugging Face at runtime)
+ENV HF_HOME=/opt/hf
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
 # ---------- stage 2: small runtime image ----------
 FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
@@ -32,6 +35,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/hf /opt/hf
+ENV HF_HOME=/opt/hf
 
 # run as a normal user, not root
 RUN useradd --create-home --uid 10001 app
