@@ -16,3 +16,13 @@ def upload_pdf(user_id: str, filename: str, data: bytes) -> Optional[str]:
     container = ContainerClient.from_connection_string(conn, os.getenv("AZURE_STORAGE_CONTAINER", "pharmastudy"))
     container.upload_blob(name, data, overwrite=True)
     return name
+
+
+def download_pdf(blob_path: str) -> Optional[bytes]:
+    """Read a saved PDF back from Blob (used to rebuild chat chunks for a study that was never indexed)."""
+    conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    if not conn or not blob_path:
+        return None
+    from azure.storage.blob import ContainerClient
+    container = ContainerClient.from_connection_string(conn, os.getenv("AZURE_STORAGE_CONTAINER", "pharmastudy"))
+    return container.download_blob(blob_path).readall()

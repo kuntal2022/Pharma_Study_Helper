@@ -287,6 +287,16 @@ def get_study(study_id: str, owner_user_id: str) -> Optional[StudyUI]:
     return StudyUI.model_validate_json(row[0]) if row else None
 
 
+def get_blob_path(study_id: str, owner_user_id: str) -> Optional[str]:
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(studies.c.blob_path).where(
+                (studies.c.study_id == study_id) & (studies.c.owner_user_id == owner_user_id)
+            )
+        ).first()
+    return row[0] if row else None
+
+
 def find_study_id(owner_user_id: str, doc_id: str) -> Optional[str]:
     """Study id if this user already saved this PDF (same hash), else None."""
     with engine.connect() as conn:

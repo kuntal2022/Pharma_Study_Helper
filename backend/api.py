@@ -5,6 +5,7 @@ Every /api endpoint takes the user id from the login token, never from the brows
 """
 import hashlib
 import json
+import logging
 import os
 import time
 import uuid
@@ -60,6 +61,28 @@ def _study_payload(study: StudyUI, study_id: str) -> dict:
     return data
 
 
+def _ensure_indexed(user_id: str, study_id: str, pdf: bytes = None) -> None:
+    """Chat reads chunks from Azure AI Search. If this study has none (uploaded before indexing existed, or the
+    first attempt failed), rebuild them from the PDF saved in Blob. Never raises: chat just answers 'no text'."""
+    try:
+        import rag
+        rag.ensure_index()
+        if any(True for _ in rag._search_client().search(search_text="*", filter=rag._flt(user_id, study_id),
+                                                         select=["id"], top=1)):
+            return
+        if pdf is None:
+            from storage import download_pdf
+            pdf = download_pdf(db.get_blob_path(study_id, user_id))
+        if not pdf:
+            obs.event("reindex_skipped", logging.WARNING, study_id=study_id, reason="no pdf in blob")
+            return
+        from extract import pages_text
+        n = rag.index_study(user_id, study_id, pages_text(pdf))
+        obs.event("reindexed", study_id=study_id, chunks=n)
+    except Exception as e:
+        obs.event("reindex_failed", logging.ERROR, study_id=study_id, error=str(e)[:300])
+
+
 @app.post("/api/studies")
 def upload_study(file: UploadFile = File(...), user_id: str = Depends(get_current_user)):
     data = file.file.read()
@@ -69,7 +92,8 @@ def upload_study(file: UploadFile = File(...), user_id: str = Depends(get_curren
         raise HTTPException(400, "Please upload a PDF file.")
     doc_id = hashlib.sha256(data).hexdigest()
     existing = db.find_study_id(user_id, doc_id)
-    if existing:                      # same PDF again: no LLM cost
+    if existing:                      # same PDF again: no LLM cost (but make sure its chat chunks exist)
+        _ensure_indexed(user_id, existing, data)
         return {"study_id": existing, "created": False}
     from extract import extract_study
     try:
@@ -169,6 +193,7 @@ def chat(study_id: str, body: ChatBody, user_id: str = Depends(get_current_user)
     if db.get_study(study_id, user_id) is None:        # ownership check
         raise HTTPException(404, "Study not found.")
     import chat_graph
+    _ensure_indexed(user_id, study_id)
     try:
         return chat_graph.ask(user_id, q, [study_id], f"study:{study_id}")
     except Exception as e:
@@ -203,6 +228,8 @@ def compare_chat(body: CompareBody, bucket: str = "all", user_id: str = Depends(
         labels[i] = display_label(st.design)
         facts.append(_facts(labels[i], st))
     import chat_graph
+    for i in ids:
+        _ensure_indexed(user_id, i)
     try:
         return chat_graph.ask(user_id, q, ids, "compare", labels, "\n".join(facts), memory_scope=f"compare:{bucket}")
     except Exception as e:
