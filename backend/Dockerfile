@@ -15,6 +15,8 @@ RUN apt-get update \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements-api.txt .
+# CPU-only torch first (the default wheel pulls ~3 GB of CUDA libraries the pod never uses; sentence-transformers then reuses it)
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install -r requirements-api.txt
 # semantic cache model baked into the image (no download from Hugging Face at runtime)
 ENV HF_HOME=/opt/hf
