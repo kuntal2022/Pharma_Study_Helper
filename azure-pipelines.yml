@@ -1,3 +1,13 @@
+# Azure DevOps pipeline -> AKS.   check -> build + push images to ACR -> deploy manifests in k8s/ to AKS.
+# Needs (one-time, see infra/aks-setup.md):
+#   * service connection "sc-pharma-acr"   (Docker Registry -> your ACR)
+#   * service connection "sc-pharma-azure" (Azure Resource Manager, scope = the resource group of the AKS)
+#   * variable group "pharma-secrets" (Pipelines > Library) with SECRET variables:
+#       OPENAI_API_KEY  JWT_SECRET  AZURE_SQL_PASSWORD  AZURE_SEARCH_KEY  AZURE_STORAGE_CONNECTION_STRING  TAVILY_API_KEY  REDIS_KEY
+#       (chat memory + exact cache: in-cluster Redis, k8s/20-redis.yaml. Semantic cache: Azure Managed Redis, REDIS_HOST in k8s/10-config.yaml, REDIS_KEY secret)
+#   * environment "pharma-prod" (optional approval check)
+# Replace the REPLACE_ME values below.
+
 trigger:
   branches:
     include: [main]
