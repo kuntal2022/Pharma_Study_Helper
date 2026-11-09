@@ -20,3 +20,8 @@ azure-storage-blob
 azure-search-documents
 python-pptx
 python-docx
+langchain_chroma 
+langchain-huggingface
+langchain-chroma
+sentence-transformers
+redisvl

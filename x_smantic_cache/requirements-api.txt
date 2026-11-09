@@ -1,0 +1,27 @@
+# Runtime-only dependencies for the Docker image (the full requirements.txt also has notebooks, mlflow, ragas, streamlit...).
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+python-dotenv
+PyJWT
+bcrypt
+sqlalchemy
+pyodbc                    # needs ODBC Driver 18 (installed in the Dockerfile)
+pymupdf
+langchain-openai
+langchain-core
+langchain-text-splitters
+langgraph
+openai
+redis
+requests
+azure-storage-blob
+azure-search-documents
+python-pptx
+python-docx
+langchain_chroma 
+langchain-huggingface
+langchain-chroma
+sentence-transformers
+redisvl
