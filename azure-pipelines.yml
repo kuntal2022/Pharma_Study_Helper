@@ -60,6 +60,8 @@ stages:
                   print("ok", f)
               PY
             displayName: Manifest YAML check
+      
+      
 
       - job: Backend
         displayName: Backend image
@@ -92,6 +94,24 @@ stages:
               tags: |
                 $(imageTag)
                 latest
+      
+      
+      # Evaluation Gate 
+      - job: EvalGate
+        displayName: Recall quality gate
+        dependsOn: Check
+        steps:
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: '3.12' }
+          - script: |
+              pip install -q -r backend/requirements.txt
+              python application_work/run_ragas.py --user-id $(EVAL_USER_ID) --min-recall 0.85 --min-precision 0.80 --min-faithfulness 0.80 --min-relevancy 0.80 \ --min-number-recall 0.70 --min-abstain 0.80
+            displayName: Metrics Check 
+            env:
+              OPENAI_API_KEY: $(OPENAI_API_KEY)
+              AZURE_SEARCH_KEY: $(AZURE_SEARCH_KEY)
+              AZURE_SEARCH_ENDPOINT: https://tufan-ai-search-v01.search.windows.net
+              AZURE_SEARCH_INDEX_NAME: pharma-study-chunks
 
   - stage: Deploy
     displayName: Deploy to AKS
