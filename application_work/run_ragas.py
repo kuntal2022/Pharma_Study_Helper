@@ -72,6 +72,13 @@ def main():
     ap.add_argument("--study-map", default=str(ROOT / "application_work/golden/study_map.json"))
     ap.add_argument("--limit", type=int, default=0, help="only the first N questions per study (smoke test)")
     ap.add_argument("--out", default=str(ROOT / "application_work/golden/ragas_results"))
+    ap.add_argument("--min-recall", type=float, default=0.0)
+    ap.add_argument("--min-faithfulness", type=float, default=0.0)
+    ap.add_argument("--min-precision", type=float, default=0.0)
+    ap.add_argument("--min-relevancy", type=float, default=0.0)
+    ap.add_argument("--min-number-recall", type=float, default=0.0)
+    ap.add_argument("--min-abstain", type=float, default=0.0, help="min abstain rate on 'not in paper' questions")
+    
     a = ap.parse_args()
 
     smap = {k: v for k, v in json.load(open(a.study_map, encoding="utf-8")).items() if not v.startswith("REPLACE")}
@@ -156,6 +163,33 @@ def main():
         for x in un[~un["abstained"]].to_dict("records"):
             print(f"  HALLUCINATION? {x['id']}: {x['answer'][:100]!r}")
     print(f"\nlatency avg {res['latency_s'].mean():.1f}s | blocked by guard: {int(res['blocked'].sum())} | saved in {a.out}")
+
+
+        # ---- metrics for the CI gate ----
+    metrics = {}
+    if not an.empty:
+        metrics = {k: round(float(v), 3) for k, v in num.mean().items()}   # faithfulness, answer_relevancy, context_precision, context_recall, number_recall
+    if not un.empty:
+        metrics["abstain_rate"] = round(float(un["abstained"].mean()), 3)
+    metrics["latency_avg_s"] = round(float(res["latency_s"].mean()), 1)
+    Path(a.out, "metrics.json").write_text(json.dumps(metrics, indent=2))
+    print("\nMETRICS", json.dumps(metrics))
+
+    gates = [
+        ("context_recall", a.min_recall),
+        ("faithfulness", a.min_faithfulness),
+        ("llm_context_precision_with_reference", a.min_precision),
+        ("answer_relevancy", a.min_relevancy),
+        ("number_recall", a.min_number_recall),
+        ("abstain_rate", a.min_abstain),
+    ]
+    
+    fails = []
+    for name, minimum in gates:
+        if minimum and metrics.get(name, 0) < minimum:
+            fails.append(f"{name} {metrics.get(name)} < {minimum}")
+    if fails:
+        sys.exit("QUALITY GATE FAILED: " + "; ".join(fails))
 
 
 if __name__ == "__main__":
