@@ -7,16 +7,16 @@ metadata:
   namespace: pharma
 data:
   REDIS_URL: "redis://redis:6379/0"
-  AZURE_SQL_SERVER: "pharmastudy-sql.database.windows.net"
-  AZURE_SQL_DATABASE: "pharmastudy-db"
-  AZURE_SQL_USERNAME: "pharmaadmin.admin"
-  AZURE_SEARCH_ENDPOINT: "https://tufan-ai-search-v01.search.windows.net"
+  AZURE_SQL_SERVER: "<yourResource>-sql.database.windows.net"
+  AZURE_SQL_DATABASE: "<your-db>"
+  AZURE_SQL_USERNAME: "<your-admin-name>.admin"
+  AZURE_SEARCH_ENDPOINT: "https://<yourResource>.search.windows.net"
   AZURE_SEARCH_INDEX_NAME: "pharma-study-chunks"
   AZURE_STORAGE_CONTAINER: "pharmastudy"
   OPENAI_CHAT_MODEL: "gpt-4.1-mini"
   OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"
   # Semantic answer cache (Azure Managed Redis). The access key REDIS_KEY is a secret: see pharma-secrets.
-  REDIS_HOST: "tufanrediscache.centralus.redis.azure.net"
+  REDIS_HOST: "<your-host-name>.<region>.redis.azure.net"
   SEMANTIC_CACHE_ENABLED: "true"
   SEMANTIC_CACHE_DISTANCE_THRESHOLD: "0.11"
   CACHE_TTL_SECONDS: "86400"
